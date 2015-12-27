@@ -1,0 +1,142 @@
+---
+title: "Practical Machine Learning - Course Project"
+author: "Prashant Nemade"
+date: "December 26, 2015"
+output: html_document
+---
+
+### Introduction:
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+### Goal of the Project:
+Data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants is been provided. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. (More information is available from the website here: http://groupware.les.inf.puc-rio.br/har)
+
+The goal of this project is to predict the manner in which 6 participants did the exercise. 
+
+### Getting and Loading the Data:
+
+```{r Data_Loading}
+# Creating data folder in working directory to download the data
+if(!file.exists("./data")){dir.create("./data")}
+
+# File url of the data to be downloaded
+train_data_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+test_data_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+# Downloading files to data folder. Have not used method="curl" because i am using windows operating system.
+if(!file.exists("./data/pml-training.csv")){download.file(train_data_url,destfile="./data/pml-training.csv")}
+if(!file.exists("./data/pml-testing.csv")){download.file(test_data_url,destfile="./data/pml-testing.csv")}
+
+training <- read.csv(file = "./data/pml-training.csv", header = TRUE, na.strings = c("NA", ""))
+
+testing <- read.csv(file = "./data/pml-testing.csv", header = TRUE, na.strings = c("NA", ""))
+
+```
+### Data Cleaning:
+Now lets check for missing values.
+```{r Missing Values}
+# Let us write a code which will give us % missing value wise number of columns.
+for(i in 1:ncol(training)){
+      if(i == 1){mv_df <- data.frame()}
+      mv_df[i, 1] <- names(training)[i]
+      mv_df[i, 2] <- round(sum(is.na(training[, i]))*100/nrow(training), 0)
+      if(i == ncol(training)){print(table(mv_df[, 2]))}
+}
+```
+The above crosstab suggests that there are 100 columns in which 98% of the total rows are missing. Hence it would be better to remove those columns from the analysis instead of imputing them. The rest 60 does not contain any missing value.
+```{r Removing Missing Value Columns}
+# Subsetting data which contains non missing columns
+NonMissing_Colnames <- names(training[, colSums(is.na(training)) == 0])
+training <- subset(training, select = NonMissing_Colnames)
+testing <- subset(testing, select = NonMissing_Colnames[which(NonMissing_Colnames != "classe")])
+```
+Now let us check for column containing constant value i.e. column having zero variance.
+``` {r Constant Value Checking}
+for(i in 1:ncol(training)){
+      if(length(unique(training[, i])) == 1){print(names(training[i]))}
+}
+```
+There are no constant value columns in the data.
+
+Time related variables and user name variable (first 7 variables) does not make sense to be included in the predictive model, it would be better to remove it from the data.
+```{r Removing first 7 variables}
+training <- training[, -(1:7)]
+testing <- testing[, -(1:7)]
+```
+This completes the data cleaning process.
+
+### Data Partition:
+To get the expected value of out of sample error lets divide the training data set into two parts, 1. train 2. validation
+``` {r Data Partition}
+library(lattice);library(ggplot2);library(caret)
+set.seed(1234)
+train_id <- createDataPartition(y = training$classe, p = 0.7, list = FALSE)
+train <- training[train_id, ]
+validation <- training[-train_id, ]
+```
+I will use this train dataset to build predictive models and  validation dataset to estimate the expected value of out of sample error for the predictive models.
+
+### Predictive Model: Decision Tree
+Lets build a predictive model (Decision Tree) using rpart method.  
+```{r Decision Tree}
+library(rpart)
+# Model Building
+model_rpart <- train(classe ~ ., method = "rpart", data = train)
+# Scoring Validation Dataset
+vld_model_rpart_score <- predict(model_rpart, newdata = validation)
+# Confusion Matrix for out of sample error estimation
+confusionMatrix(vld_model_rpart_score, validation$classe)
+```
+From the above confusion matrix, predictions from the decision tree model seems to be very poor with an accuracy of 48.9% (which leads to estimated out of sample error of 51.1%).
+
+### Predictive Model: Boosting with Decision Tree
+```{r Boosting with Decision Tree}
+library(gbm); library(survival); library(splines); library(parallel); library(plyr)
+# Model Building
+model_gbm <- train(classe ~ ., method = "gbm", data = train, verbose = FALSE)
+# Scoring Validation Dataset
+vld_model_gbm_score <- predict(model_gbm, newdata = validation)
+# Confusion Matrix for out of sample error estimation
+confusionMatrix(vld_model_gbm_score, validation$classe)
+```
+From the above confusion matrix, predictions from the boosting with decision tree model (using "gbm" method) seems to be much better as compared to earlier model (using "rpart" method) with an accuracy of 96.4% (which leads to estimated out of sample error of 3.6%).
+
+Now lets go for random forest model to see its performance.
+
+### Predictive Model: Random Forest
+```{r Random Forest}
+library(randomForest)
+# Model Building
+model_rf <- train(classe ~ ., method = "rf", data = train, ntree = 100)
+# Scoring Validation Dataset
+vld_model_rf_score <- predict(model_rf, newdata = validation)
+# Confusion Matrix for out of sample error estimation
+confusionMatrix(vld_model_rf_score, validation$classe)
+
+```
+From the above confusion matrix, predictions from the random forest model are excellent with an accuracy of 99.4% (which leads to estimated out of sample error of just 0.6%).
+
+### Result:
+3 Different predictive models have been used to check their performance. Below are the details of **out of sample error**,
+1. Decision Tree: 51.1%
+2. Boosting with Decision Tree: 3.6%
+3. Random Forest: 0.6%
+Random Forest model has given the excellent prediction accuracy of 99.4%. Hence we will use this model to predict 20 different test cases.
+
+### Prediction on the test data:
+```{r Prediction on Test Data}
+# Scoring Test Dataset
+answer <- predict(model_rf, newdata = testing)
+# Converting into character
+answer <- as.character(answer)
+# Function to write predictions to file
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+# Calling function with desired parameter
+pml_write_files(answer)
+```
